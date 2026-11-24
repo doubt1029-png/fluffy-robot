@@ -1,0 +1,7 @@
+[
+{"id":"hongdae-park","name":"홍익문화공원 공중화장실","area":"홍대 홍대입구 합정 마포 서울","address":"서울 마포구 와우산로21길 일대","lat":37.5525,"lng":126.9221,"entry":"open","code":"no","type":"flush","public":"yes"},
+{"id":"hongdae-station","name":"홍대입구역 화장실","area":"홍대 홍대입구 연남동 마포 서울","address":"서울 마포구 양화로 지하 160","lat":37.5572,"lng":126.9243,"entry":"open","code":"no","type":"flush","public":"unknown"},
+{"id":"yeonnam","name":"연남동 생활문화시설 화장실","area":"홍대 연남동 마포 서울","address":"서울 마포구 동교로 일대","lat":37.5583,"lng":126.9211,"entry":"locked","code":"yes","type":"flush","public":"no"},
+{"id":"seogyo","name":"서교동 공용 화장실","area":"홍대 홍대입구 합정 마포 서울","address":"서울 마포구 잔다리로 일대","lat":37.5548,"lng":126.9194,"entry":"unknown","code":"unknown","type":"unknown","public":"unknown"},
+{"id":"sinchon","name":"신촌역 화장실","area":"신촌 서대문 서울","address":"서울 서대문구 신촌로 지하 90","lat":37.5552,"lng":126.9369,"entry":"open","code":"no","type":"flush","public":"unknown"}
+]

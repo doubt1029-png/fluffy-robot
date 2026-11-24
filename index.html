@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#2563eb"><title>일볼때 · 주변 화장실 찾기</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head>
+<body><main class="app">
+<header><div class="brand"><span class="logo" aria-hidden="true">WC</span>일볼때</div><span class="demo">예시 데이터</span></header>
+<section class="intro"><h1>주변 화장실 찾기</h1><p>거리와 출입 조건을 한눈에 확인하세요.</p>
+<form id="search"><label class="sr" for="query">지역명, 시설명 또는 주소</label><input id="query" type="search" minlength="2" maxlength="50" required placeholder="지역명, 시설명 또는 주소"><button class="primary">검색</button></form></section>
+<section class="map" aria-label="화장실 위치 약도"><canvas id="drawing" aria-hidden="true"></canvas><div id="pins"></div><span class="map-label">샘플 약도</span><button id="locate" class="locate">◎ 현재 위치</button></section>
+<section class="results"><div class="result-head"><div><h2 id="area">홍대입구 주변</h2><p id="count" role="status"></p></div><button id="available" class="chip" aria-pressed="false">출입 가능만</button></div>
+<p id="message" role="status" hidden></p><div id="list"></div><button id="expand" class="outline" hidden>검색 범위 확대</button></section>
+</main><dialog id="sheet" aria-labelledby="sheet-title"></dialog></body></html>
