@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const sheet = $('#sheet');
-const start = { lat: 37.5558, lng: 126.9228 };
+const start = { lat: 37.5663, lng: 126.9779 };
 const groups = {
   entry: ['출입 상태', { open: '출입 가능', locked: '출입 불가·잠김', unknown: '정보 없음' }],
   code: ['비밀번호', { no: '불필요', yes: '필요', unknown: '정보 없음' }],
@@ -9,7 +9,7 @@ const groups = {
 };
 let places = [];
 let center = start;
-let area = '홍대입구 주변';
+let area = '서울시청 주변';
 let radius = 1000;
 let query = '';
 let openOnly = false;
@@ -17,6 +17,32 @@ let selected;
 let shown = [];
 let loadError = false;
 let dialogTrigger;
+let map;
+let markers;
+let mapHint;
+let gps;
+let selecting = false;
+let ignoreMove = false;
+let localPlaces = readLocalPlaces();
+
+function readLocalPlaces() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ilbolttae.locations') || '[]');
+    return Array.isArray(saved) ? saved.filter(place => place && Number.isFinite(place.lat) && Number.isFinite(place.lng)) : [];
+  } catch {
+    return [];
+  }
+}
+function saveLocalPlaces(next) {
+  localStorage.setItem('ilbolttae.locations', JSON.stringify(next));
+  localPlaces = next;
+}
+function recenter(point, zoom) {
+  if (!map) return;
+  ignoreMove = true;
+  map.setView([point.lat, point.lng], zoom, { animate: false });
+  ignoreMove = false;
+}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
@@ -50,66 +76,136 @@ function showMessage(message) {
   $('#message').textContent = message;
   $('#message').hidden = !message;
 }
-function project(point, width, height) {
-  const longitudeScale = 111320 * Math.cos(center.lat * Math.PI / 180);
-  const scale = Math.min(width, height) * 0.44 / radius;
-  return [width / 2 + (point.lng - center.lng) * longitudeScale * scale,
-    height / 2 - (point.lat - center.lat) * 111320 * scale];
-}
 function drawMap() {
-  const canvas = $('#drawing');
-  const { width, height } = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-  ctx.fillStyle = '#e9eff3';
-  ctx.fillRect(0, 0, width, height);
-  ctx.save();
-  ctx.translate(width / 2, height / 2);
-  ctx.rotate(-0.29);
-  for (let x = -width; x < width; x += 78) {
-    for (let y = -height; y < height; y += 56) {
-      ctx.fillStyle = (x + y) % 5 === 0 ? '#d4e7dc' : '#dfe7ee';
-      ctx.fillRect(x, y, 69, 47);
-    }
+  if (!markers) return;
+  markers.clearLayers();
+  if (gps) {
+    L.circle([gps.lat, gps.lng], { radius: gps.accuracy, color: '#2563eb', fillOpacity: 0.1,
+      weight: 1, interactive: false }).addTo(markers);
+    L.circleMarker([gps.lat, gps.lng], { radius: 7, fillColor: '#2563eb', fillOpacity: 1,
+      color: '#fff', weight: 2, interactive: false }).addTo(markers);
   }
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 10;
-  for (let x = -width; x < width; x += 78) {
-    ctx.beginPath();
-    ctx.moveTo(x - 5, -height);
-    ctx.lineTo(x - 5, height);
-    ctx.stroke();
-  }
-  ctx.restore();
-  const pins = $('#pins');
-  pins.replaceChildren();
-  function placeAt(element, point) {
-    const [x, y] = project(point, width, height);
-    element.style.left = x + 'px';
-    element.style.top = Math.max(28, Math.min(height - 36, y)) + 'px';
-    pins.append(element);
-  }
-  const origin = document.createElement('span');
-  origin.className = 'origin';
-  origin.setAttribute('aria-hidden', 'true');
-  placeAt(origin, center);
-  for (const place of shown.slice().reverse()) {
-    const pin = document.createElement('button');
-    pin.className = 'pin ' + tone(place);
-    pin.textContent = 'WC';
-    pin.setAttribute('aria-label', place.name + ' ' + meters(place) + ' ' + label(place, 'entry'));
-    pin.onclick = () => detail(place);
-    placeAt(pin, place);
+  for (const place of shown) {
+    const pin = L.divIcon({
+      className: '', html: '<span class="pin ' + tone(place) + '" aria-hidden="true">WC</span>',
+      iconSize: [44, 44], iconAnchor: [22, 22]
+    });
+    L.marker([place.lat, place.lng], { icon: pin, title: place.name, alt: place.name })
+      .addTo(markers).on('click', event => {
+        if (selecting) return chooseLocation(event.latlng);
+        detail(place);
+      });
   }
 }
+
+function initMap() {
+  if (!window.L) {
+    $('#add-place').disabled = true;
+    $('#real-map').textContent = '지도 라이브러리를 불러오지 못했습니다. 목록으로 검색할 수 있습니다.';
+    return;
+  }
+  map = L.map('real-map').setView([center.lat, center.lng], 14);
+  const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+  let loadedTile = false;
+  tiles.on('tileload', () => {
+    if (loadedTile) return;
+    loadedTile = true;
+    tiles.off('tileerror', tileError);
+  });
+  function tileError() {
+    if (!loadedTile) showMessage('지도 배경 연결이 지연되고 있습니다. 위치 목록은 계속 이용할 수 있습니다.');
+  }
+  tiles.on('tileerror', tileError);
+  markers = L.layerGroup().addTo(map);
+  mapHint = document.createElement('div');
+  mapHint.className = 'map-hint';
+  mapHint.hidden = true;
+  mapHint.innerHTML = '<p>지도에서 화장실 위치를 선택하세요.</p><button type="button">지도 중심 선택</button>';
+  mapHint.querySelector('button').onclick = () => chooseLocation(map.getCenter());
+  $('#real-map').parentElement.append(mapHint);
+  map.on('click', event => { if (selecting) chooseLocation(event.latlng); });
+  map.on('moveend', () => {
+    if (ignoreMove || selecting) return;
+    query = '';
+    const next = map.getCenter();
+    center = { lat: next.lat, lng: next.lng };
+    radius = Math.max(500, map.distance(next, map.getBounds().getNorthEast()));
+    area = '지도 중심 주변';
+    showMessage('');
+    render();
+  });
+}
+
+function setSelecting(active) {
+  selecting = active;
+  mapHint.hidden = !active;
+  $('#add-place').textContent = active ? '위치 추가 취소' : '＋ 위치 추가';
+  $('#real-map').style.cursor = active ? 'crosshair' : '';
+}
+
+function chooseLocation(point) {
+  setSelecting(false);
+  openSheet('화장실 위치 추가', '<p>선택한 위치 ' +
+    point.lat.toFixed(5) + ', ' + point.lng.toFixed(5) +
+    '</p><form id="location-form"><label for="location-name">화장실 이름</label>' +
+    '<input id="location-name" class="form-input" maxlength="80" required>' +
+    '<label for="location-address">주소 또는 찾아가는 설명 (선택)</label>' +
+    '<input id="location-address" class="form-input" maxlength="160">' +
+    '<p id="form-error" role="alert"></p><div class="actions"><button id="pick-again" type="button">위치 다시 선택</button>' +
+    '<button id="save-location" class="primary">위치 저장</button></div></form>');
+  $('#pick-again').onclick = () => { sheet.close(); setSelecting(true); };
+  $('#location-form').onsubmit = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = $('#save-location');
+    const error = $('#form-error');
+    const name = $('#location-name').value.trim();
+    const address = $('#location-address').value.trim();
+    if (!name || point.lat < 32.9 || point.lat > 38.7 || point.lng < 124.5 || point.lng > 132) {
+      error.textContent = '이름과 국내 지도 좌표를 확인해주세요.';
+      return;
+    }
+    button.disabled = true;
+    error.textContent = '';
+    try {
+      const response = await fetch('/api/locations', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, address, lat: point.lat, lng: point.lng })
+      });
+      const result = await response.json();
+      let place = result;
+      if (!response.ok) {
+        if (!result.localOnly) throw new Error(result.message);
+        place = { id: 'local-' + crypto.randomUUID(), name, address, area: address,
+          lat: point.lat, lng: point.lng, entry: 'unknown', code: 'unknown',
+          type: 'unknown', public: 'unknown', source: 'local' };
+        saveLocalPlaces([...localPlaces, place]);
+      }
+      places.push(place);
+      center = place;
+      query = '';
+      openOnly = false;
+      $('#available').setAttribute('aria-pressed', false);
+      area = '추가한 위치 주변';
+      radius = 1000;
+      recenter(place, 16);
+      showMessage(place.source === 'local' ? '이 브라우저에 위치를 저장했습니다.' : '공유 지도에 위치를 저장했습니다.');
+      render();
+      if (sheet.open && form.isConnected) detail(place);
+    } catch (cause) {
+      error.textContent = cause instanceof TypeError ? '연결을 확인하고 다시 시도해주세요.' : (cause.message || '위치를 저장하지 못했습니다.');
+      button.disabled = false;
+    }
+  };
+}
+
 function render() {
   shown = places.filter(place => (query ? matches(place, query) : distance(place) <= radius) &&
-    (!openOnly || effective(place, 'entry') === 'open')).sort((a, b) => distance(a) - distance(b));
+    (!openOnly || effective(place, 'entry') === 'open')).sort((a, b) => distance(a) - distance(b)).slice(0, 35);
   $('#area').textContent = area;
-  $('#count').textContent = loadError ? '' : shown.length + '곳 · 직선거리순';
+  $('#count').textContent = loadError ? '' : shown.length + (shown.length === 35 ? '곳 표시' : '곳') + ' · 직선거리순';
   $('#expand').hidden = loadError || shown.length > 0 || radius >= 10000;
   $('#list').replaceChildren(...shown.map(place => {
     const item = document.createElement('button');
@@ -128,7 +224,7 @@ function render() {
 }
 function matches(place, term) {
   const normalize = text => text.toLowerCase().replace(/\s/g, '');
-  return normalize(place.name + place.address + place.area).includes(normalize(term));
+  return term.toLowerCase().trim().split(/\s+/).every(word => normalize(place.name + ' ' + place.address + ' ' + place.area).includes(normalize(word)));
 }
 function openSheet(title, body) {
   sheet.innerHTML = '<div class="row"><h2 id="sheet-title">' + escapeHtml(title) +
@@ -153,7 +249,7 @@ function detail(place) {
     '</dl><p>' + verified(place) + '</p>' +
     (place.conflicts?.length ? '<p>서로 다른 제보가 있는 항목은 정보 없음으로 표시됩니다.</p>' : '') +
     (place.note && !place.conflicts?.length ? '<p>' + escapeHtml(place.note) + '</p>' : '') +
-    '<p class="meta">예시 시설 정보이며 실제 이용 가능 여부는 현장에서 확인해주세요.</p>' +
+    ((place.hours ? '<p>표기된 개방시간 ' + escapeHtml(place.hours) + '</p>' : '') + '<p class="meta">' + (place.source === 'osm' ? 'OpenStreetMap 시설 정보' : place.source === 'local' ? '이 브라우저에 추가한 위치' : '사용자가 추가한 위치') + ' · 이용 조건은 현장에서 확인해주세요.</p>') +
     '<div class="actions"><button id="back">다른 화장실 찾기</button><button class="primary" id="report">정보 제보</button></div>');
   $('#back').onclick = () => sheet.close();
   $('#report').onclick = reportForm;
@@ -178,6 +274,16 @@ function reportForm() {
     submit.disabled = true;
     formError.textContent = '';
     try {
+      const values = Object.fromEntries(new FormData(form));
+      if (place.source === 'local') {
+        const record = { ...place, ...values, verifiedAt: new Date().toISOString() };
+        saveLocalPlaces(localPlaces.map(item => item.id === place.id ? record : item));
+        Object.assign(place, record);
+        render();
+        showMessage('이 브라우저에 이용 정보를 저장했습니다.');
+        detail(place);
+        return;
+      }
       const response = await fetch('/api/reports', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: place.id, ...Object.fromEntries(new FormData(form)) })
@@ -210,12 +316,12 @@ $('#search').onsubmit = event => {
     field.reportValidity();
     return;
   }
-  const match = places.find(place => matches(place, term));
+  const candidates = places.filter(place => matches(place, term));
+  const match = candidates.find(place => place.name.includes(term) || place.address.includes(term)) || candidates[0];
   query = term;
   center = match || start;
   radius = 1000;
-  const matchesInArea = places.filter(place => matches(place, term));
-  if (matchesInArea.length) radius = Math.max(radius, ...matchesInArea.map(distance));
+  if (match) recenter(match, 14);
   area = term + ' 검색 결과';
   showMessage('');
   render();
@@ -231,38 +337,61 @@ $('#expand').onclick = () => {
   query = '';
   radius = Math.min(10000, radius * 2);
   area = '기준점 주변 ' + (radius / 1000) + 'km';
+  recenter(center, map ? Math.max(6, map.getZoom() - 1) : 13);
   showMessage('');
   render();
 };
 $('#locate').onclick = () => {
   const button = $('#locate');
-  const failure = () => {
+  const failure = error => {
     button.disabled = false;
-    showMessage('현재 위치를 확인할 수 없습니다. 지역을 직접 검색해주세요.');
+    const reasons = {
+      1: '위치 권한이 차단되어 있습니다. 브라우저 사이트 설정에서 허용하거나 지역명을 검색해주세요.',
+      2: '기기에서 위치를 확인할 수 없습니다. 위치 서비스 설정을 확인해주세요.',
+      3: '위치를 확인하는 데 시간이 걸립니다. 다시 시도하거나 지역명을 검색해주세요.'
+    };
+    showMessage(reasons[error?.code] || '위치 사용에는 HTTPS 또는 localhost 접속이 필요합니다.');
   };
-  if (!navigator.geolocation) return failure();
+  if (!window.isSecureContext || !navigator.geolocation) return failure();
   button.disabled = true;
   showMessage('현재 위치를 확인하고 있습니다.');
   navigator.geolocation.getCurrentPosition(({ coords }) => {
-    center = coords;
+    gps = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy };
+    center = gps;
     query = '';
     $('#query').value = '';
-    radius = 1000;
+    radius = 2000;
     area = '현재 위치 주변';
     button.disabled = false;
+    recenter(gps, 14);
     showMessage('');
     render();
-  }, failure, { timeout: 8000 });
+  }, failure, { timeout: 15000, maximumAge: 30000 });
 };
-new ResizeObserver(drawMap).observe($('#drawing'));
-fetch('/api/places').then(response => {
-  if (!response.ok) throw new Error();
-  return response.json();
-}).then(data => {
-  places = data;
+
+initMap();
+$('#add-place').onclick = () => setSelecting(!selecting);
+
+async function loadPlaces() {
+  const addButton = $('#add-place');
+  addButton.disabled = true;
+  try {
+    const response = await fetch('/api/places');
+    if (!response.ok) throw new Error();
+    places = [...await response.json(), ...localPlaces];
+  } catch {
+    try {
+      const fallback = await fetch('/data.json');
+      if (!fallback.ok) throw new Error();
+      places = [...await fallback.json(), ...localPlaces];
+      showMessage('기본 지도 데이터를 표시하고 있습니다. 공유 위치와 제보는 잠시 후 다시 확인해주세요.');
+    } catch {
+      places = [...localPlaces];
+      loadError = !places.length;
+      showMessage('화장실 정보를 불러오지 못했습니다. 연결을 확인하고 새로고침해주세요.');
+    }
+  }
+  addButton.disabled = !map;
   render();
-}).catch(() => {
-  loadError = true;
-  showMessage('화장실 정보를 불러오지 못했습니다. 연결을 확인하고 새로고침해주세요.');
-  render();
-});
+}
+loadPlaces();

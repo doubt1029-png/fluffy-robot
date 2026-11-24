@@ -34,6 +34,7 @@ function saveReport(id, values, note) {
 const assets = {
   '/': ['index.html', 'text/html'],
   '/style.css': ['style.css', 'text/css'],
+  '/data.json': ['data.json', 'application/json'],
   '/app.js': ['app.js', 'text/javascript']
 };
 createServer(async (req, res) => {
@@ -45,6 +46,7 @@ createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/api/places') {
       return send(200, places.map(place => ({ ...place, ...reports[place.id] })));
     }
+    if (req.method === 'POST' && req.url === '/api/locations') return send(503, { localOnly: true });
     if (req.method === 'POST' && req.url === '/api/reports') {
       let body = '';
       for await (const chunk of req.setEncoding('utf8')) {
