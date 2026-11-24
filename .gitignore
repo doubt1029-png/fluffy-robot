@@ -1,2 +1,6 @@
 reports.json
 reports.tmp
+dist/
+.vercel/
+.env
+.env.*

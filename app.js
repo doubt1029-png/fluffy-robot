@@ -183,7 +183,11 @@ function reportForm() {
         body: JSON.stringify({ id: place.id, ...Object.fromEntries(new FormData(form)) })
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.message);
+      if (!response.ok) {
+        formError.textContent = result.message || '제보를 저장하지 못했습니다. 다시 시도해주세요.';
+        submit.disabled = false;
+        return;
+      }
       Object.assign(place, result);
       render();
       if (!sheet.open || !form.isConnected) return;

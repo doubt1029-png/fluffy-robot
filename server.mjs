@@ -1,14 +1,8 @@
+import { fields, places, validateReport } from './lib/places.mjs';
 import { createServer } from 'node:http';
 import { readFile, writeFile, rename } from 'node:fs/promises';
 
 const file = name => new URL(name, import.meta.url);
-const places = JSON.parse(await readFile(file('data.json'), 'utf8'));
-const fields = {
-  entry: ['open', 'locked', 'unknown'],
-  code: ['yes', 'no', 'unknown'],
-  type: ['flush', 'squat', 'unknown'],
-  public: ['yes', 'no', 'unknown']
-};
 let reports;
 try {
   reports = JSON.parse(await readFile(file('reports.json'), 'utf8'));
@@ -64,17 +58,9 @@ createServer(async (req, res) => {
       try { input = JSON.parse(body); } catch {
         return send(400, { message: '입력 내용을 확인해주세요.' });
       }
-      if (!input || !places.some(place => place.id === input.id)) {
-        return send(404, { message: '화장실 정보를 찾을 수 없습니다.' });
-      }
-      const keys = Object.keys(fields);
-      if (!keys.every(key => fields[key].includes(input[key]))) {
-        return send(400, { message: '필수 항목을 모두 선택해주세요.' });
-      }
-      if (typeof input.note !== 'string' || input.note.length > 200) {
-        return send(400, { message: '추가 설명은 200자 이하로 입력해주세요.' });
-      }
-      return send(201, await saveReport(input.id, Object.fromEntries(keys.map(key => [key, input[key]])), input.note.trim()));
+      const report = validateReport(input);
+      if (report.status) return send(report.status, { message: report.message });
+      return send(201, await saveReport(report.id, report.values, report.note));
     }
     if (req.method === 'GET' && Object.hasOwn(assets, req.url)) {
       const [name, mime] = assets[req.url];
